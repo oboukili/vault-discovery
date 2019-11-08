@@ -2,11 +2,13 @@ package main
 
 import (
 	"crypto/rand"
+	"crypto/tls"
 	"encoding/json"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 	"google.golang.org/api/compute/v1"
 	"google.golang.org/api/option"
+	"io/ioutil"
 	"math/big"
 	"net"
 	"net/http"
@@ -14,17 +16,11 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
-	"time"
 )
 
-const constVaultPort  = 8200
+const constVaultPort = 8200
 
 type GCEZoneInstances map[string][]*compute.Instance
-
-type GCEServiceClient struct {
-	Context context.Context
-	Service *compute.Service
-}
 
 func GCEInstanceFilter(instances []*compute.Instance) (result []*compute.Instance) {
 	filter, ok := os.LookupEnv("TAG_INSTANCE_FILTER")
@@ -86,31 +82,63 @@ func GCEGetInstances(project string, s *compute.InstancesService, ctx context.Co
 	return r, err
 }
 
-func GetRandomInt() (int, error) {
-	var min int64 = 32000
-	var max int64 = 65000
+func GetRandomOpenTCPPort() (int, error) {
+	var min int64 = 1024
+	var max int64 = 65534
 	r, err := rand.Int(rand.Reader, big.NewInt(max-min))
 	if err != nil {
 		return 0, err
 	}
 	n := r.Int64()
-	sum := n + min
-	return int(sum), nil
+	port := n + min
+	// Check whether the TCP port is available, increment it otherwise until we find a free port
+	for {
+		conn, err := net.Dial("tcp", "localhost:"+strconv.Itoa(int(port)))
+		if err != nil {
+			break
+		}
+		if err = conn.Close(); err != nil {
+			log.WithError(err).Warnf("Could not close the test socket connection...")
+		}
+		port = port + 1
+	}
+	return int(port), nil
 }
 
 func IsVaultPrimaryInstance(url string) (b bool, err error) {
-	var client = &http.Client{Timeout: 10 * time.Second}
-	r, err := client.Get(url)
+	var InsecureSkipVerify = false
+	tsv, ok := os.LookupEnv("TLS_SKIP_VERIFY")
+	if ok {
+		InsecureSkipVerify, err = strconv.ParseBool(tsv)
+		if err != nil {
+			return false, err
+		}
+	}
+	http.DefaultTransport.(*http.Transport).TLSClientConfig = &tls.Config{InsecureSkipVerify: InsecureSkipVerify}
+	var client = http.Client{}
+	resp, err := client.Get(url)
 	if err != nil {
 		return false, err
 	}
 	defer func() {
-		if err := r.Body.Close(); err != nil {
-			log.WithError(err)
+		if err := resp.Body.Close(); err != nil {
+			log.WithError(err).Warnf("Could not close http connection to Vault...")
 		}
 	}()
-	var target map[string]string
-	err = json.NewDecoder(r.Body).Decode(target)
+
+	if resp.StatusCode == http.StatusOK {
+		bodyBytes, err := ioutil.ReadAll(resp.Body)
+		if err != nil {
+			log.Fatal(err)
+		}
+		bodyString := string(bodyBytes)
+		log.Info(bodyString)
+	} else {
+	
+	}
+
+	var target map[string]
+	err = json.NewDecoder(resp.Body).Decode(target)
 	if err != nil {
 		return false, err
 	}
@@ -140,58 +168,49 @@ func main() {
 	if len(r) == 0 {
 		log.Fatalf("No instances were found!")
 	}
-	instancesNames := make([]string, 0)
-	for _, v := range r {
-		for _, k := range v {
-			instancesNames = append(instancesNames, k.Name)
-		}
-	}
-	
 	var url strings.Builder
 
-	for _, in := range instancesNames {
-		port, err := GetRandomInt()
-		if err != nil {
-			log.WithError(err).Fatalf("Could not generate a random port number!")
-		}
-		tunnel := exec.Command(
-			"/usr/bin/gcloud",
-			"compute",
-			"start-iap-tunnel",
-			"--project", project,
-			"--local-host-port=localhost:"+strconv.Itoa(port),
-			in, strconv.Itoa(constVaultPort),
-		)
-		if err := tunnel.Run(); err != nil {
-			log.WithFields(log.Fields{
-				"tunnelProcessState": tunnel.ProcessState.String(),
-				"stderr":tunnel.Stderr}).WithError(err).Fatalf("Could not start IAP tunnel!")
-		}
-		// Wait for socket to be open before continuing
-		for {
-			conn, err := net.Dial("tcp", ":"+strconv.Itoa(port))
-			if err == nil {
-				if err = conn.Close(); err != nil {
-					log.WithError(err).Warnf("Could not close the test socket connection...")
+	for zone, instances := range r {
+		for _, instance := range instances {
+
+			port, err := GetRandomOpenTCPPort()
+			if err != nil {
+				log.WithError(err).Fatalf("Could not generate a random port number!")
+			}
+			if _, err := exec.LookPath("gcloud"); err != nil {
+				log.WithError(err).Fatalf("Could not find gcloud in PATH!")
+			}
+
+			tunnel := exec.Command("gcloud", "compute",
+				"start-iap-tunnel", instance.Name, strconv.Itoa(constVaultPort),
+				"--project", project,
+				"--local-host-port", "localhost:"+strconv.Itoa(port),
+				"--zone", zone)
+			//tunnel.Stdout = os.Stdout
+			tunnel.Stderr = os.Stderr
+			if err := tunnel.Start(); err != nil {
+				log.WithError(err).WithField("args", tunnel.Args).Fatalf("Could not start IAP tunnel!")
+			}
+
+			// Wait for socket to be open before continuing
+			for {
+				conn, err := net.Dial("tcp", ":"+strconv.Itoa(port))
+				if err == nil {
+					if err = conn.Close(); err != nil {
+						log.WithError(err).Warnf("Could not close the test socket connection...")
+					}
+					break
 				}
-				break
 			}
-			if tunnel.ProcessState.Exited() {
-				log.WithFields(log.Fields{
-					"tunnelProcessState":tunnel.ProcessState.String(),
-					"stderr":tunnel.Stderr}).Fatalf("IAP tunnel error!")
+
+			url.Reset()
+			url.WriteString("https://localhost:")
+			url.WriteString(strconv.Itoa(port))
+			url.WriteString("/v1/sys/health")
+			_, err = IsVaultPrimaryInstance(url.String())
+			if err != nil {
+				log.WithError(err).Fatalf("Could not call Vault instance!")
 			}
-		}
-		
-		url.Reset()
-		url.WriteString("https://localhost:")
-		url.WriteString(strconv.Itoa(port))
-		ok, err := IsVaultPrimaryInstance(url.String())
-		if err != nil {
-			log.WithError(err).Fatalf("Could not call Vault instance!")
-		}
-		if ok {
-			log.Printf("%s is primary", in)
 		}
 	}
 }
