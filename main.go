@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"encoding/json"
+	vault "github.com/hashicorp/vault/api"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 	"google.golang.org/api/compute/v1"
@@ -16,9 +17,10 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 )
 
-const constVaultPort = 8200
+const VaultPort = 8200
 
 type GCEZoneInstances map[string][]*compute.Instance
 
@@ -82,27 +84,33 @@ func GCEGetInstances(project string, s *compute.InstancesService, ctx context.Co
 	return r, err
 }
 
-func GetRandomOpenTCPPort() (int, error) {
-	var min int64 = 1024
-	var max int64 = 65534
-	r, err := rand.Int(rand.Reader, big.NewInt(max-min))
+func GetRandomOpenTCPPort() (port int, err error) {
+	var minPort int64 = 1024
+	var maxPort int64 = 65534
+	r, err := rand.Int(rand.Reader, big.NewInt(maxPort-minPort))
 	if err != nil {
 		return 0, err
 	}
 	n := r.Int64()
-	port := n + min
+	port = int(n + minPort)
+
 	// Check whether the TCP port is available, increment it otherwise until we find a free port
 	for {
-		conn, err := net.Dial("tcp", "localhost:"+strconv.Itoa(int(port)))
-		if err != nil {
-			break
-		}
-		if err = conn.Close(); err != nil {
-			log.WithError(err).Warnf("Could not close the test socket connection...")
+		conn, _ := net.DialTimeout("tcp", net.JoinHostPort("localhost", strconv.Itoa(port)), 1*time.Second)
+		switch conn {
+		case nil:
+			return port, err
+		default:
+			if err := conn.Close(); err != nil {
+				log.WithError(err).Warnf("Could not clean up the TCP test connection...")
+			}
 		}
 		port = port + 1
+		if port > int(maxPort) {
+			break
+		}
 	}
-	return int(port), nil
+	return port, err
 }
 
 func IsVaultPrimaryInstance(url string) (b bool, err error) {
@@ -122,28 +130,20 @@ func IsVaultPrimaryInstance(url string) (b bool, err error) {
 	}
 	defer func() {
 		if err := resp.Body.Close(); err != nil {
-			log.WithError(err).Warnf("Could not close http connection to Vault...")
+			log.WithError(err).Warnf("Could not close HTTP connection to Vault...")
 		}
 	}()
 
-	if resp.StatusCode == http.StatusOK {
-		bodyBytes, err := ioutil.ReadAll(resp.Body)
-		if err != nil {
-			log.Fatal(err)
-		}
-		bodyString := string(bodyBytes)
-		log.Info(bodyString)
-	} else {
-	
+	bodyBytes, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		log.Fatal(err)
 	}
-
-	var target map[string]
-	err = json.NewDecoder(resp.Body).Decode(target)
+	var health vault.HealthResponse
+	err = json.Unmarshal(bodyBytes, &health)
 	if err != nil {
 		return false, err
 	}
-	log.Print(target)
-	return false, err
+	return !health.Standby, err
 }
 
 func main() {
@@ -182,20 +182,20 @@ func main() {
 			}
 
 			tunnel := exec.Command("gcloud", "compute",
-				"start-iap-tunnel", instance.Name, strconv.Itoa(constVaultPort),
+				"start-iap-tunnel", instance.Name, strconv.Itoa(VaultPort),
 				"--project", project,
 				"--local-host-port", "localhost:"+strconv.Itoa(port),
 				"--zone", zone)
+			// TODO: for easy debugging, cleanup after dev phase
 			//tunnel.Stdout = os.Stdout
-			tunnel.Stderr = os.Stderr
+			//tunnel.Stderr = os.Stderr
 			if err := tunnel.Start(); err != nil {
 				log.WithError(err).WithField("args", tunnel.Args).Fatalf("Could not start IAP tunnel!")
 			}
-
-			// Wait for socket to be open before continuing
+			// Wait for IAP tunnel socket to be open before continuing
 			for {
-				conn, err := net.Dial("tcp", ":"+strconv.Itoa(port))
-				if err == nil {
+				conn, err := net.Dial("tcp", "localhost:"+strconv.Itoa(port))
+				if conn != nil {
 					if err = conn.Close(); err != nil {
 						log.WithError(err).Warnf("Could not close the test socket connection...")
 					}
@@ -207,10 +207,22 @@ func main() {
 			url.WriteString("https://localhost:")
 			url.WriteString(strconv.Itoa(port))
 			url.WriteString("/v1/sys/health")
-			_, err = IsVaultPrimaryInstance(url.String())
+			ok, err = IsVaultPrimaryInstance(url.String())
 			if err != nil {
-				log.WithError(err).Fatalf("Could not call Vault instance!")
+				log.WithError(err).WithField("url", url.String()).Fatalf("Could not call Vault instance!")
 			}
+			switch ok {
+			case false:
+				if err := tunnel.Process.Signal(os.Interrupt); err != nil {
+					log.WithError(err).Warnf("Could not gracefully interrupt the tunnel...")
+				}
+				if err := tunnel.Process.Release(); err != nil {
+					log.WithError(err).Warnf("Could not release tunnel process resources...")
+				}
+			case true:
+				log.Printf("%s is primary", instance.Name)
+			}
+
 		}
 	}
 }
