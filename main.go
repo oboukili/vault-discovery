@@ -5,12 +5,12 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"github.com/google/tcpproxy"
 	vault "github.com/hashicorp/vault/api"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 	"google.golang.org/api/compute/v1"
 	"google.golang.org/api/option"
-	"io"
 	"io/ioutil"
 	"math/big"
 	"net"
@@ -93,9 +93,8 @@ func GCEGetInstances(project string, s *compute.InstancesService, ctx context.Co
 	return r, err
 }
 
-func GCEGetVaultTunnelConn(ctx context.Context, project string) (VaultTunnelConn, error) {
+func GCEGetVaultTunnelConn(ctx context.Context, project string) (v VaultTunnelConn, err error) {
 	var url strings.Builder
-	var conn net.Conn
 
 	c, err := GCEInitServiceClient(ctx)
 	if err != nil {
@@ -113,102 +112,102 @@ func GCEGetVaultTunnelConn(ctx context.Context, project string) (VaultTunnelConn
 	// TODO: use go channels to initialize tunnels, (function should return a channel?)
 	for zone, instances := range r {
 		for _, instance := range instances {
-
-			port, err := GetRandomOpenTCPPort()
+			gCloudPort, err := GetAvailableLocalTCPPort()
 			if err != nil {
-				log.WithError(err).Fatalf("Could not generate a random port number!")
+				log.WithError(err).Fatalf("Could not get a free TCP port!")
 			}
 			if _, err := exec.LookPath("gcloud"); err != nil {
 				log.WithError(err).Fatalf("Could not find gcloud in PATH!")
 			}
-
 			tunnel := exec.Command("gcloud", "compute",
 				"start-iap-tunnel", instance.Name, strconv.Itoa(VaultRemotePort),
 				"--project", project,
-				"--local-host-port", "127.0.0.1:"+strconv.Itoa(port),
+				"--local-host-port", "127.0.0.1:"+gCloudPort,
 				"--zone", zone)
-			// TODO: for easy debugging, cleanup after dev phase
-			//tunnel.Stdout = os.Stdout
-			//tunnel.Stderr = os.Stderr
-			if err := tunnel.Start(); err != nil {
-				log.WithError(err).WithField("args", tunnel.Args).Fatalf("Could not start IAP tunnel!")
+
+			err = tunnel.Start()
+			if err != nil {
+				return v, err
 			}
 			// Wait for IAP tunnel socket to be open before continuing
+			var conn net.Conn
 			startingTimestampInSeconds := time.Now().Second()
 			for {
-				conn, err = net.Dial("tcp", "127.0.0.1:"+strconv.Itoa(port))
-				if conn != nil {
-					if err = conn.Close(); err != nil {
-						log.WithError(err).Warnf("Could not close the test socket connection...")
-					}
+				conn, err = net.DialTimeout("tcp4", "127.0.0.1:"+gCloudPort, 60*time.Second)
+				if conn != nil && err == nil {
 					break
 				}
 				time.Sleep(1 * time.Second)
 				if time.Now().Second() > startingTimestampInSeconds+10 {
-					log.Fatalf("Could not connect to the TCP tunnel within 10 seconds!")
-					break
+					log.WithError(err).Fatalf("Could not connect to the TCP tunnel within 10 seconds!")
 				}
 			}
 
 			url.Reset()
-			url.WriteString(VaultHTTPScheme + "://127.0.0.1:")
-			url.WriteString(strconv.Itoa(port))
+			url.WriteString(VaultHTTPScheme)
+			url.WriteString("://")
+			url.WriteString(VaultTunnelLocalAddr)
+			url.WriteString(":")
+			url.WriteString(gCloudPort)
 			url.WriteString("/v1/sys/health")
-			ok, err := IsVaultPrimaryInstance(url.String())
+
+			ok, err := isVaultPrimaryInstance(url.String())
 			if err != nil {
 				log.WithError(err).WithField("url", url.String()).Fatalf("Could not call Vault instance!")
 			}
 			switch ok {
 			case false:
-				if err := tunnel.Process.Signal(os.Interrupt); err != nil {
-					log.WithError(err).Warnf("Could not gracefully interrupt the tunnel...")
+				if err := conn.Close(); err != nil {
+					log.WithError(err).Warnf("Could not close the test socket connection...")
 				}
-				if err := tunnel.Process.Release(); err != nil {
-					log.WithError(err).Warnf("Could not release tunnel process resources...")
-				}
+				handlerExitCommand(tunnel)
 			case true:
-				log.WithField("PrimaryInstanceName", instance.Name).Infof("Primary Vault instance detected")
-				conn, err = net.Dial("tcp", "127.0.0.1:"+strconv.Itoa(port))
-				if err != nil || conn == nil {
-					return VaultTunnelConn{nil, nil}, err
-				}
+				log.WithField("PrimaryInstanceName", instance.Name).Infof("Primary Vault instance detected ;)")
 				return VaultTunnelConn{conn, tunnel}, err
 			}
 		}
 	}
-	return VaultTunnelConn{nil, nil}, fmt.Errorf("empty tunnel")
+	return v, fmt.Errorf("empty tunnel")
 }
 
-func GetRandomOpenTCPPort() (port int, err error) {
+func GetAvailableLocalTCPPort() (port string, err error) {
 	var minPort int64 = 1024
 	var maxPort int64 = 65534
-	r, err := rand.Int(rand.Reader, big.NewInt(maxPort-minPort))
-	if err != nil {
-		return 0, err
-	}
-	n := r.Int64()
-	port = int(n + minPort)
-
+	maxTries := 10
 	// Check whether the TCP port is available, increment it otherwise until we find a free port
 	for {
-		conn, _ := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), 1*time.Second)
-		switch conn {
-		case nil:
+		r, err := rand.Int(rand.Reader, big.NewInt(maxPort-minPort))
+		if err != nil {
 			return port, err
-		default:
-			if err := conn.Close(); err != nil {
-				log.WithError(err).Warnf("Could not clean up the TCP test connection...")
-			}
 		}
-		port = port + 1
-		if port > int(maxPort) {
+		port = strconv.Itoa(int(r.Int64() + minPort))
+		conn, err := net.Dial("tcp", net.JoinHostPort("127.0.0.1", port))
+		if conn == nil {
+			// When conn is nil, it means the port is free
 			break
+		}
+		err = conn.Close()
+		if err != nil {
+			log.WithError(err).Warnf("could not close test TCP port")
+		}
+		maxTries = maxTries - 1
+		if maxTries == 0 {
+			return port, fmt.Errorf("could not find an available port after 10 retries :(")
 		}
 	}
 	return port, err
 }
 
-func IsVaultPrimaryInstance(url string) (b bool, err error) {
+func handlerExitCommand(cmd *exec.Cmd) {
+	if err := cmd.Process.Signal(os.Interrupt); err != nil {
+		log.WithError(err).Warnf("Could not gracefully interrupt the tunnel...")
+	}
+	if err := cmd.Process.Release(); err != nil {
+		log.WithError(err).Warnf("Could not release tunnel OS resources...")
+	}
+}
+
+func isVaultPrimaryInstance(url string) (b bool, err error) {
 	var InsecureSkipVerify = false
 	tsv, ok := os.LookupEnv("TLS_SKIP_VERIFY")
 	if ok {
@@ -244,7 +243,6 @@ func IsVaultPrimaryInstance(url string) (b bool, err error) {
 func main() {
 	var v VaultTunnelConn
 	var err error
-	tunnelLocalAddr := VaultTunnelLocalAddr + ":" + strconv.Itoa(VaultRemotePort)
 	provider := "GCE"
 	ctx := context.Background()
 	customFormatter := new(log.TextFormatter)
@@ -259,29 +257,36 @@ func main() {
 
 	// TODO: implement new discovery providers like Kubernetes
 	if strings.EqualFold(provider, "GCE") {
-
 		v, err = GCEGetVaultTunnelConn(ctx, project)
 		defer func() {
 			if err := v.conn.Close(); err != nil {
 				log.WithError(err).WithField("remoteAddr", v.conn.RemoteAddr()).Warnf("Could not close local tunnel connection")
 			}
-			if err := v.cmd.Process.Signal(os.Interrupt); err != nil {
-				log.WithError(err).Warnf("Could not gracefully interrupt the tunnel...")
-			}
-			if err := v.cmd.Process.Release(); err != nil {
-				log.WithError(err).Warnf("Could not release tunnel process resources...")
-			}
+			handlerExitCommand(v.cmd)
 		}()
 		if err != nil {
 			log.Fatal(err)
 		}
 	}
 
-	c, err := net.Listen("tcp4", tunnelLocalAddr)
+	l, err := net.Listen("tcp4", VaultTunnelLocalAddr+":"+strconv.Itoa(VaultRemotePort))
 	if err != nil {
-		log.WithError(err).Fatal("Could not listen on " + tunnelLocalAddr)
+		log.WithError(err).Fatal("Could not start listener")
 	}
-	log.WithField("ListenerAddress", tunnelLocalAddr).Infof("Listening for TCP input...")
+	log.WithField("addr", VaultTunnelLocalAddr+":"+strconv.Itoa(VaultRemotePort)).Infof("Listening for TCP input...")
+	c, err := l.Accept()
+
+	if err != nil {
+		log.WithError(err).Fatal("Could not handle incoming request")
+	}
+	defer func() {
+		if err := l.Close(); err != nil {
+			log.Warn(err)
+		}
+		if err := c.Close(); err != nil {
+			log.Warn(err)
+		}
+	}()
 
 	signals := make(chan os.Signal, 1)
 	stop := make(chan bool)
@@ -293,29 +298,7 @@ func main() {
 		}
 	}()
 
-	go handleConnection(c, v.conn)
+	p := tcpproxy.To(v.conn.RemoteAddr().String())
+	p.HandleConn(c)
 	<-stop
-}
-
-func handleConnection(incoming net.Listener, tunnel net.Conn) {
-	client, err := incoming.Accept()
-	if err != nil {
-		log.WithError(err).Fatal()
-	}
-	defer func() {
-		if err := client.Close(); err != nil {
-			log.WithError(err).Warnf("Could not close TCP connection client")
-		}
-	}()
-	// net.Conn implements io.Writer and io.Reader :)
-	go func() {
-		if _, err := io.Copy(tunnel, client); err != nil {
-			log.WithError(err).Fatal("Error sending request data from client to tunnel")
-		}
-	}()
-	go func() {
-		if _, err := io.Copy(client, tunnel); err != nil {
-			log.WithError(err).Fatal("Error sending response data from tunnel to client")
-		}
-	}()
 }
