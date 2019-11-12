@@ -243,6 +243,9 @@ func isVaultPrimaryInstance(url string) (b bool, err error) {
 func main() {
 	var v VaultTunnelConn
 	var err error
+	var p tcpproxy.Proxy
+	listenerAddr := VaultTunnelLocalAddr + ":" + strconv.Itoa(VaultRemotePort)
+
 	provider := "GCE"
 	ctx := context.Background()
 	customFormatter := new(log.TextFormatter)
@@ -269,36 +272,21 @@ func main() {
 		}
 	}
 
-	l, err := net.Listen("tcp4", VaultTunnelLocalAddr+":"+strconv.Itoa(VaultRemotePort))
-	if err != nil {
-		log.WithError(err).Fatal("Could not start listener")
-	}
-	log.WithField("addr", VaultTunnelLocalAddr+":"+strconv.Itoa(VaultRemotePort)).Infof("Listening for TCP input...")
-	c, err := l.Accept()
-
-	if err != nil {
-		log.WithError(err).Fatal("Could not handle incoming request")
-	}
-	defer func() {
-		if err := l.Close(); err != nil {
-			log.Warn(err)
-		}
-		if err := c.Close(); err != nil {
-			log.Warn(err)
-		}
-	}()
-
 	signals := make(chan os.Signal, 1)
 	stop := make(chan bool)
 	signal.Notify(signals, os.Interrupt)
 	go func() {
 		for range signals {
-			log.Println("\nReceived an interrupt, stopping...")
+			log.Println("Received an interrupt, stopping...")
 			stop <- true
 		}
 	}()
 
-	p := tcpproxy.To(v.conn.RemoteAddr().String())
-	p.HandleConn(c)
+	p.AddRoute(listenerAddr, tcpproxy.To(v.conn.RemoteAddr().String()))
+	err = p.Start()
+	if err != nil {
+		log.WithError(err).Fatal("Could not start listener")
+	}
+	log.WithField("addr", listenerAddr).Info("Started listener...")
 	<-stop
 }
