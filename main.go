@@ -151,7 +151,7 @@ func GCEGetVaultTunnelConn(ctx context.Context, project string) (v VaultTunnelCo
 			url.WriteString(gCloudPort)
 			url.WriteString("/v1/sys/health")
 
-			ok, err := isVaultPrimaryInstance(url.String())
+			ok, err := IsVaultPrimaryInstance(url.String())
 			if err != nil {
 				log.WithError(err).WithField("url", url.String()).Fatalf("Could not call Vault instance!")
 			}
@@ -160,7 +160,7 @@ func GCEGetVaultTunnelConn(ctx context.Context, project string) (v VaultTunnelCo
 				if err := conn.Close(); err != nil {
 					log.WithError(err).Warnf("Could not close the test socket connection...")
 				}
-				handlerExitCommand(tunnel)
+				HandlerExitCommand(tunnel)
 			case true:
 				log.WithField("PrimaryInstanceName", instance.Name).Infof("Primary Vault instance detected ;)")
 				return VaultTunnelConn{conn, tunnel}, err
@@ -198,7 +198,7 @@ func GetAvailableLocalTCPPort() (port string, err error) {
 	return port, err
 }
 
-func handlerExitCommand(cmd *exec.Cmd) {
+func HandlerExitCommand(cmd *exec.Cmd) {
 	if err := cmd.Process.Signal(os.Interrupt); err != nil {
 		log.WithError(err).Warnf("Could not gracefully interrupt the tunnel...")
 	}
@@ -207,7 +207,7 @@ func handlerExitCommand(cmd *exec.Cmd) {
 	}
 }
 
-func isVaultPrimaryInstance(url string) (b bool, err error) {
+func IsVaultPrimaryInstance(url string) (b bool, err error) {
 	var InsecureSkipVerify = false
 	tsv, ok := os.LookupEnv("TLS_SKIP_VERIFY")
 	if ok {
@@ -265,7 +265,7 @@ func main() {
 			if err := v.conn.Close(); err != nil {
 				log.WithError(err).WithField("remoteAddr", v.conn.RemoteAddr()).Warnf("Could not close local tunnel connection")
 			}
-			handlerExitCommand(v.cmd)
+			HandlerExitCommand(v.cmd)
 		}()
 		if err != nil {
 			log.Fatal(err)
