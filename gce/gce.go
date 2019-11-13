@@ -61,13 +61,13 @@ func initServiceClient(ctx context.Context) (s *compute.Service, err error) {
 	return s, err
 }
 
-func GetInstances(ctx context.Context, project string, s *compute.InstancesService) (r types.GCEZoneInstances, err error) {
+func GetInstances(ctx context.Context, project string, s *compute.InstancesService) (r zonalInstances, err error) {
 	instances, err := s.AggregatedList(project).Context(ctx).Do()
 	if err != nil {
 		return nil, err
 	}
 
-	r = make(types.GCEZoneInstances)
+	r = make(zonalInstances)
 	for zone, zoneInstances := range instances.Items {
 		if len(zoneInstances.Instances) > 0 {
 			r[strings.TrimPrefix(zone, "zones/")] = filterInstances(zoneInstances.Instances)
