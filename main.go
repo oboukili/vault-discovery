@@ -1,8 +1,10 @@
 package main
 
 import (
-	"github.com/google/tcpproxy"
 	log "github.com/sirupsen/logrus"
+
+	"fmt"
+	"github.com/google/tcpproxy"
 	"gitlab.com/maltcommunity/public/vault-discovery/gce"
 	"gitlab.com/maltcommunity/public/vault-discovery/helpers"
 	"gitlab.com/maltcommunity/public/vault-discovery/types"
@@ -32,7 +34,7 @@ func main() {
 	if !ok {
 		log.Fatalf("GOOGLE_PROJECT environment variable must be set!")
 	}
-	provider, ok = os.LookupEnv("PROVIDER")
+	provider, ok = os.LookupEnv("DISCOVERY_PROVIDER")
 	if !ok {
 		provider = "GCE"
 	}
@@ -45,9 +47,7 @@ func main() {
 			VaultScheme: VaultRemoteHTTPScheme,
 		})
 		defer func() {
-			if err := v.Conn.Close(); err != nil {
-				log.WithError(err).WithField("remoteAddr", v.Conn.RemoteAddr()).Warnf("Could not close local tunnel connection")
-			}
+			helpers.HandlerCloseConn(v.Conn, fmt.Errorf("could not close local tunnel connection: %s", v.Conn.RemoteAddr()))
 			helpers.HandlerExitCommand(v.Cmd)
 		}()
 		if err != nil {
