@@ -58,6 +58,7 @@ vault-discovery
 * Unit tests
 * Acceptance tests
 * Exposing an interface{} API contract for new discovery providers
+* Get rid of the 'gcloud' tool dependency for the GCE provider (publish a library for creating GCP IAP tunnels?)
 
 ---
 

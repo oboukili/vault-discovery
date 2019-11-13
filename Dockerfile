@@ -1,21 +1,33 @@
 FROM golang:1.13-alpine as builder
-ENV GOPATH=/go
+#ENV GOPATH=/go
 WORKDIR /
 
 COPY . .
-RUN apk --no-cache --update add git ca-certificates tzdata
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o  /vault-discovery
+
+FROM alpine:latest
+
+RUN apk add --no-cache --update ca-certificates tzdata python
+RUN apk add --no-cache --virtual .build-deps git curl
 RUN update-ca-certificates
 RUN adduser -D -g '' app
 
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o vault-discovery
+# Gcloud SDK
+ARG GCLOUD_SDK_VERSION=270.0.0
+RUN curl -fsO https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-sdk-${GCLOUD_SDK_VERSION}-linux-x86_64.tar.gz \
+    && tar xzf google-cloud-sdk-${GCLOUD_SDK_VERSION}-linux-x86_64.tar.gz \
+    && rm google-cloud-sdk-${GCLOUD_SDK_VERSION}-linux-x86_64.tar.gz \
+    && ln -s /lib /lib64
 
-FROM scratch
+RUN apk del .build-deps
 
-COPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo
-COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
-COPY --from=builder /etc/passwd /etc/passwd
-COPY --from=builder /go/vault-discovery /bin/vault-discovery
+COPY --from=builder /vault-discovery /bin/vault-discovery
 
 USER app
+ENV PATH="$PATH:/google-cloud-sdk/bin"
+RUN gcloud config set core/disable_usage_reporting true && \
+    gcloud config set component_manager/disable_update_check true && \
+    gcloud config set core/disable_prompts true && \
+    gcloud --version
 
 ENTRYPOINT ["/bin/vault-discovery"]
