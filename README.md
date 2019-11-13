@@ -63,9 +63,11 @@ vault-discovery
 ---
 
 ### Build
- 
+
+**Requires go 1.13+**
+
 ```sh
-GOOS=linux go build -ldflags="-s -w" -o vault-discovery
+GOOS=linux go build -mod=readonly -ldflags="-s -w" -o vault-discovery
 ```
 
 ---
