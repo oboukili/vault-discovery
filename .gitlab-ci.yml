@@ -9,8 +9,6 @@ stages:
 
 build-release:
   stage: build
-  variables:
-    CI_PROJECT_DIR: /go/app
   before_script:
     - echo "{\"auths\":{\"$CI_REGISTRY\":{\"username\":\"$CI_REGISTRY_USER\",\"password\":\"$CI_REGISTRY_PASSWORD\"}}}" > /kaniko/.docker/config.json
   script:
@@ -32,8 +30,6 @@ build-release:
 
 build-only:
   stage: build
-  variables:
-    CI_PROJECT_DIR: /go/app
   script:
     - >
       /kaniko/executor \

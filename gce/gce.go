@@ -61,7 +61,7 @@ func initServiceClient(ctx context.Context) (s *compute.Service, err error) {
 	return s, err
 }
 
-func GetInstances(project string, s *compute.InstancesService, ctx context.Context) (r types.GCEZoneInstances, err error) {
+func GetInstances(ctx context.Context, project string, s *compute.InstancesService) (r types.GCEZoneInstances, err error) {
 	instances, err := s.AggregatedList(project).Context(ctx).Do()
 	if err != nil {
 		return nil, err
@@ -82,7 +82,7 @@ func GetVaultPrimaryTunnelConn(ctx context.Context, project string, attrs types.
 		log.WithError(err).Fatalf("Could not initialize Service client!")
 	}
 	instanceService := compute.NewInstancesService(c)
-	r, err := GetInstances(project, instanceService, ctx)
+	r, err := GetInstances(ctx, project, instanceService)
 	if err != nil {
 		log.WithError(err).Fatalf("Could not get instances!")
 	}

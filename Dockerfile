@@ -1,5 +1,6 @@
 FROM golang:1.13-alpine as builder
 ENV GOPATH=/go
+WORKDIR /
 
 COPY . .
 RUN apk --no-cache --update add git ca-certificates tzdata
