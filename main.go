@@ -30,6 +30,8 @@ func main() {
 	customFormatter.FullTimestamp = true
 	log.SetFormatter(customFormatter)
 
+	log.Infof("Starting vault-discovery ;)")
+
 	project, ok := os.LookupEnv("GOOGLE_PROJECT")
 	if !ok {
 		log.Fatalf("GOOGLE_PROJECT environment variable must be set!")
@@ -41,7 +43,7 @@ func main() {
 
 	switch provider {
 	case "GCE":
-		v, err = gce.GetVaultTunnelConn(ctx, project, types.VaultTunnelConnAttrs{
+		v, err = gce.GetVaultPrimaryTunnelConn(ctx, project, types.VaultTunnelConnAttrs{
 			LocalAddr:   VaultTunnelLocalAddr,
 			LocalPort:   VaultRemotePort,
 			VaultScheme: VaultRemoteHTTPScheme,

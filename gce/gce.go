@@ -76,7 +76,7 @@ func GetInstances(project string, s *compute.InstancesService, ctx context.Conte
 	return r, err
 }
 
-func GetVaultTunnelConn(ctx context.Context, project string, attrs types.VaultTunnelConnAttrs) (v types.VaultTunnelConn, err error) {
+func GetVaultPrimaryTunnelConn(ctx context.Context, project string, attrs types.VaultTunnelConnAttrs) (v types.VaultTunnelConn, err error) {
 	c, err := initServiceClient(ctx)
 	if err != nil {
 		log.WithError(err).Fatalf("Could not initialize Service client!")

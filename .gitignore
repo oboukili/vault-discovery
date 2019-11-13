@@ -1,2 +1,3 @@
 go_build*
-.idea/**/*
+vault-discovery
+.idea
