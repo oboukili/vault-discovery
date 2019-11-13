@@ -81,10 +81,7 @@ func GetAvailableLocalTCPPort() (port string, err error) {
 			// When Conn is nil, it means the port is free
 			break
 		}
-		err = conn.Close()
-		if err != nil {
-			log.WithError(err).Warnf("could not close test TCP port")
-		}
+		HandlerCloseConn(conn, fmt.Errorf("could not close test TCP port"))
 		maxTries = maxTries - 1
 		if maxTries == 0 {
 			return port, fmt.Errorf("could not find an available port after 10 retries :(")

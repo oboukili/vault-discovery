@@ -90,18 +90,17 @@ func GetVaultTunnelConn(ctx context.Context, project string, attrs types.VaultTu
 		log.Fatalf("No instances were found!")
 	}
 
-	// TODO: use go channels to initialize tunnels, (function should return a channel?)
-	vaultChan := make(chan types.VaultTunnelConn, 1)
+	ch := make(chan types.VaultTunnelConn, 1)
 	for _, instances := range r {
-		for _, instance := range instances {
+		for _, i := range instances {
 			go func() {
-				if err := handleInitTunnelConn(vaultChan, instance, attrs, project); err != nil {
+				if err := handleInitTunnelConn(ch, i, attrs, project); err != nil {
 					log.WithError(err).Fatal()
 				}
 			}()
 		}
 	}
-	v = <-vaultChan
+	v = <-ch
 	return v, err
 }
 
