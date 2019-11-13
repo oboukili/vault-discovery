@@ -3,7 +3,7 @@ FROM golang:1.13-alpine as builder
 WORKDIR /
 
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o  /vault-discovery
+RUN CGO_ENABLED=0 GOOS=linux go build -mod=readonly -ldflags="-s -w" -o  /vault-discovery
 
 FROM alpine:latest
 
