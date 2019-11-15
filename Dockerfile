@@ -29,4 +29,5 @@ RUN gcloud config set core/disable_usage_reporting true && \
     gcloud config set core/disable_prompts true && \
     gcloud --version
 
+EXPOSE 8200
 ENTRYPOINT ["/bin/vault-discovery"]
