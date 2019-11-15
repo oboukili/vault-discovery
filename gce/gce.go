@@ -73,21 +73,22 @@ func GetInstances(ctx context.Context, project string, s *compute.InstancesServi
 			r[strings.TrimPrefix(zone, "zones/")] = filterInstances(zoneInstances.Instances)
 		}
 	}
+	log.WithField("count", len(r)).Info("(GCE) Found Vault instances ;)")
 	return r, err
 }
 
 func GetVaultPrimaryTunnelConn(ctx context.Context, project string, attrs types.VaultTunnelConnAttrs) (v types.VaultTunnelConn, err error) {
 	c, err := initServiceClient(ctx)
 	if err != nil {
-		log.WithError(err).Fatalf("Could not initialize Service client!")
+		log.WithError(err).Fatalf("(GCE) Could not initialize Service client!")
 	}
 	instanceService := compute.NewInstancesService(c)
 	r, err := GetInstances(ctx, project, instanceService)
 	if err != nil {
-		log.WithError(err).Fatalf("Could not get instances!")
+		log.WithError(err).Fatalf("(GCE) Could not get instances!")
 	}
 	if len(r) == 0 {
-		log.Fatalf("No instances were found!")
+		log.Fatalf("(GCE) No instances were found!")
 	}
 
 	ch := make(chan types.VaultTunnelConn, 1)
@@ -107,11 +108,13 @@ func GetVaultPrimaryTunnelConn(ctx context.Context, project string, attrs types.
 func handleInitTunnelConn(c chan types.VaultTunnelConn, instance *compute.Instance, attrs types.VaultTunnelConnAttrs, project string) error {
 	gCloudPort, err := helpers.GetAvailableLocalTCPPort()
 	if err != nil {
-		return errors.Wrapf(err, "Could not get a free TCP port!")
+		return errors.Wrapf(err, "(GCE) Could not get a free TCP port!")
 	}
 	if _, err := exec.LookPath("gcloud"); err != nil {
-		return errors.Wrapf(err, "Could not find gcloud in PATH!")
+		return errors.Wrapf(err, "(GCE) Could not find gcloud in PATH!")
 	}
+
+	log.WithField("port", gCloudPort).Info("(GCE) Starting IAP tunnel...")
 	tunnel := exec.Command("gcloud", "compute",
 		"start-iap-tunnel", instance.Name, attrs.LocalPort,
 		"--project", project,
@@ -119,7 +122,7 @@ func handleInitTunnelConn(c chan types.VaultTunnelConn, instance *compute.Instan
 		"--zone", instance.Zone)
 	err = tunnel.Start()
 	if err != nil {
-		return errors.Wrapf(err, "could not start the tunnel")
+		return errors.Wrapf(err, "(GCE) Could not start the tunnel!")
 	}
 	// Wait for IAP tunnel socket to be open before continuing
 	var conn net.Conn
@@ -131,10 +134,11 @@ func handleInitTunnelConn(c chan types.VaultTunnelConn, instance *compute.Instan
 		}
 		time.Sleep(1 * time.Second)
 		if time.Now().Second() > startingTimestampInSeconds+10 {
-			return errors.Wrapf(err, "Could not connect to the TCP tunnel within 10 seconds!")
+			return errors.Wrapf(err, "(GCE) Could not connect to the TCP tunnel within 10 seconds!")
 		}
 	}
-
+	
+	log.WithField("port", gCloudPort).Info("(GCE) IAP tunnel open ;)")
 	var url strings.Builder
 	url.WriteString(attrs.VaultScheme)
 	url.WriteString("://")
@@ -143,14 +147,14 @@ func handleInitTunnelConn(c chan types.VaultTunnelConn, instance *compute.Instan
 	url.WriteString(gCloudPort)
 	ok, err := helpers.IsVaultPrimaryInstance(url.String())
 	if err != nil {
-		return errors.Wrapf(err, "Could not call Vault instance! url: %s", url.String())
+		return errors.Wrapf(err, "(GCE) Could not call Vault instance! url: %s", url.String())
 	}
 	switch ok {
 	case false:
 		helpers.HandlerCloseConn(conn, nil)
 		helpers.HandlerExitCommand(tunnel)
 	case true:
-		log.WithField("PrimaryInstanceName", instance.Name).Infof("Primary Vault instance detected ;)")
+		log.WithField("PrimaryInstanceName", instance.Name).Infof("(GCE) Primary Vault instance detected ;)")
 		c <- types.VaultTunnelConn{Conn: conn, Cmd: tunnel, Attrs: attrs}
 	}
 	return err

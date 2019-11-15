@@ -9,6 +9,11 @@ All resources are available as Go library imports.
 
 ### Usage
 
+#### GCE
+
+**Roles required**
+* roles/compute.viewer
+
 **Basic**
 ```sh
 # This is enough when running vault-discover from GCP

@@ -69,6 +69,7 @@ func GetAvailableLocalTCPPort() (port string, err error) {
 	var minPort int64 = 1024
 	var maxPort int64 = 65534
 	maxTries := 10
+	log.Info("Starting to look for a free TCP port...")
 	// Check whether the TCP port is available, increment it otherwise until we find a free port
 	for {
 		r, err := rand.Int(rand.Reader, big.NewInt(maxPort-minPort))
