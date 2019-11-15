@@ -1,4 +1,11 @@
 Dockerfile
+Dockerfile.debian
+go_build*
+vault-discovery
+.git
 .gitlab-ci.yml
+.idea
+.gitignore
+.dockerignore
 README.md
 LICENSE

@@ -48,6 +48,7 @@ vault-discovery
 |---|---|---|---|---|
 | |DISCOVERY_PROVIDER|*no*|*GCE*|For now, only the "GCE" provider is available.|
 | |TLS_SKIP_VERIFY|*no*|*false*|Whether to skip or not Vault endpoint certificate.|
+|gce|GCE_DEBUG|*no*|*false*|Whether to enable gcloud stdout/stderr|
 |gce|GOOGLE_PROJECT|**yes**| |Name of the GCP project to look for instances.|
 |gce|GOOGLE_APPLICATION_CREDENTIALS|*no*| |Should not be needed when running from GCP.|
 |gce|NAME_INSTANCE_FILTER|*no*| |Blob expression prefix to filter instances (example: 'vault-' == 'vault-*').|

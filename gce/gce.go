@@ -1,7 +1,9 @@
 package gce
 
 import (
+	"fmt"
 	log "github.com/sirupsen/logrus"
+	"strconv"
 
 	"github.com/pkg/errors"
 	"gitlab.com/maltcommunity/public/vault-discovery/helpers"
@@ -54,7 +56,7 @@ func filterInstances(instances []*compute.Instance) (result []*compute.Instance)
 }
 
 func initServiceClient(ctx context.Context) (s *compute.Service, err error) {
-	s, err = compute.NewService(ctx, option.WithScopes("https://www.googleapis.com/auth/compute.readonly"))
+	s, err = compute.NewService(ctx, option.WithScopes(compute.ComputeReadonlyScope))
 	if err != nil {
 		return nil, err
 	}
@@ -62,18 +64,28 @@ func initServiceClient(ctx context.Context) (s *compute.Service, err error) {
 }
 
 func GetInstances(ctx context.Context, project string, s *compute.InstancesService) (r zonalInstances, err error) {
-	instances, err := s.AggregatedList(project).Context(ctx).Do()
-	if err != nil {
+	r = make(zonalInstances)
+
+	req := s.AggregatedList(project).Context(ctx)
+	if err := req.Pages(ctx, func(page *compute.InstanceAggregatedList) error {
+		for zone, instancesScopedList := range page.Items {
+			if len(instancesScopedList.Instances) > 0 {
+				r[strings.TrimPrefix(zone, "zones/")] = filterInstances(instancesScopedList.Instances)
+			}
+		}
+		return nil
+	}); err != nil {
 		return nil, err
 	}
-
-	r = make(zonalInstances)
-	for zone, zoneInstances := range instances.Items {
-		if len(zoneInstances.Instances) > 0 {
-			r[strings.TrimPrefix(zone, "zones/")] = filterInstances(zoneInstances.Instances)
+	var instancesCount int
+	for _, v := range r {
+		if len(v) == 0 {
+			return nil, fmt.Errorf("(GCE) Could not get some instances' details, it usually happens if your filters (tags,name,labels) do not match: %+v", r)
 		}
+		instancesCount += len(v)
 	}
-	log.WithField("count", len(r)).Info("(GCE) Found Vault instances ;)")
+
+	log.WithField("count", instancesCount).Info("(GCE) Found Vault instances ;)")
 	return r, err
 }
 
@@ -90,7 +102,6 @@ func GetVaultPrimaryTunnelConn(ctx context.Context, project string, attrs types.
 	if len(r) == 0 {
 		log.Fatalf("(GCE) No instances were found!")
 	}
-
 	ch := make(chan types.VaultTunnelConn, 1)
 	for _, instances := range r {
 		for _, i := range instances {
@@ -120,6 +131,19 @@ func handleInitTunnelConn(c chan types.VaultTunnelConn, instance *compute.Instan
 		"--project", project,
 		"--local-host-port", "127.0.0.1:"+gCloudPort,
 		"--zone", instance.Zone)
+
+	var debug bool
+	d, ok := os.LookupEnv("GCE_DEBUG")
+	if ok {
+		debug, err = strconv.ParseBool(d)
+		if err != nil {
+			return errors.Wrapf(err, "GCE_DEBUG Environment variable should be boolean compatible")
+		}
+	}
+	if debug {
+		tunnel.Stderr = os.Stderr
+		tunnel.Stdout = os.Stdout
+	}
 	err = tunnel.Start()
 	if err != nil {
 		return errors.Wrapf(err, "(GCE) Could not start the tunnel!")
@@ -137,7 +161,6 @@ func handleInitTunnelConn(c chan types.VaultTunnelConn, instance *compute.Instan
 			return errors.Wrapf(err, "(GCE) Could not connect to the TCP tunnel within 10 seconds!")
 		}
 	}
-	
 	log.WithField("port", gCloudPort).Info("(GCE) IAP tunnel open ;)")
 	var url strings.Builder
 	url.WriteString(attrs.VaultScheme)
@@ -145,7 +168,7 @@ func handleInitTunnelConn(c chan types.VaultTunnelConn, instance *compute.Instan
 	url.WriteString(attrs.LocalAddr)
 	url.WriteString(":")
 	url.WriteString(gCloudPort)
-	ok, err := helpers.IsVaultPrimaryInstance(url.String())
+	ok, err = helpers.IsVaultPrimaryInstance(url.String())
 	if err != nil {
 		return errors.Wrapf(err, "(GCE) Could not call Vault instance! url: %s", url.String())
 	}
