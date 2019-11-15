@@ -1,15 +1,15 @@
-FROM golang:1.13-alpine as builder
+FROM golang:1.13-buster as builder
 WORKDIR /
 
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -mod=readonly -ldflags="-s -w" -o  /vault-discovery
 
-FROM alpine:latest
+FROM debian:buster
 
-RUN apk add --no-cache --update ca-certificates tzdata python
-RUN apk add --no-cache --virtual .build-deps git curl
+RUN apt-get update
+RUN apt-get install ca-certificates tzdata python git curl -y
 RUN update-ca-certificates
-RUN adduser -D -g '' app
+RUN useradd app -m -d /app
 
 # Gcloud SDK
 ARG GCLOUD_SDK_VERSION=270.0.0
@@ -18,7 +18,7 @@ RUN curl -fsO https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-
     && rm google-cloud-sdk-${GCLOUD_SDK_VERSION}-linux-x86_64.tar.gz \
     && ln -s /lib /lib64
 
-RUN apk del .build-deps
+RUN apt-get remove git curl -y
 
 COPY --from=builder /vault-discovery /bin/vault-discovery
 

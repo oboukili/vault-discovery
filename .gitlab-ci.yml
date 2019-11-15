@@ -7,7 +7,7 @@ default:
 stages:
   - build
 
-build-release:
+build-release/alpine:
   stage: build
   before_script:
     - echo "{\"auths\":{\"$CI_REGISTRY\":{\"username\":\"$CI_REGISTRY_USER\",\"password\":\"$CI_REGISTRY_PASSWORD\"}}}" > /kaniko/.docker/config.json
@@ -18,8 +18,12 @@ build-release:
         --context ${CI_PROJECT_DIR} \
         --destination ${CI_REGISTRY_IMAGE}:${CI_COMMIT_SHORT_SHA} \
         --destination ${CI_REGISTRY_IMAGE}:${CI_COMMIT_REF_SLUG} \
+        --destination ${CI_REGISTRY_IMAGE}:${CI_COMMIT_SHORT_SHA}-alpine \
+        --destination ${CI_REGISTRY_IMAGE}:${CI_COMMIT_REF_SLUG}-alpine \
         --destination eu.gcr.io/malt-build/${CI_PROJECT_NAME}:${CI_COMMIT_REF_SLUG} \
-        --destination eu.gcr.io/malt-build/${CI_PROJECT_NAME}:${CI_COMMIT_SHORT_SHA}
+        --destination eu.gcr.io/malt-build/${CI_PROJECT_NAME}:${CI_COMMIT_SHORT_SHA} \
+        --destination eu.gcr.io/malt-build/${CI_PROJECT_NAME}:${CI_COMMIT_REF_SLUG}-alpine \
+        --destination eu.gcr.io/malt-build/${CI_PROJECT_NAME}:${CI_COMMIT_SHORT_SHA}-alpine
   after_script:
     - shred -u /kaniko/.docker/config.json
   only:
@@ -28,12 +32,49 @@ build-release:
   tags:
     - kubernetes
 
-build-only:
+build-release/debian:
+  stage: build
+  before_script:
+    - echo "{\"auths\":{\"$CI_REGISTRY\":{\"username\":\"$CI_REGISTRY_USER\",\"password\":\"$CI_REGISTRY_PASSWORD\"}}}" > /kaniko/.docker/config.json
+  script:
+    - >
+      /kaniko/executor \
+        --verbosity error \
+        --dockerfile ${CI_PROJECT_DIR}/Dockerfile.debian \
+        --context ${CI_PROJECT_DIR} \
+        --destination ${CI_REGISTRY_IMAGE}:${CI_COMMIT_SHORT_SHA}-debian \
+        --destination ${CI_REGISTRY_IMAGE}:${CI_COMMIT_REF_SLUG}-debian \
+        --destination eu.gcr.io/malt-build/${CI_PROJECT_NAME}:${CI_COMMIT_REF_SLUG}-debian \
+        --destination eu.gcr.io/malt-build/${CI_PROJECT_NAME}:${CI_COMMIT_SHORT_SHA}-debian
+  after_script:
+    - shred -u /kaniko/.docker/config.json
+  only:
+    refs:
+      - master
+  tags:
+    - kubernetes
+
+build-only/alpine:
   stage: build
   script:
     - >
       /kaniko/executor \
         --verbosity error \
+        --context ${CI_PROJECT_DIR} \
+        --no-push
+  except:
+    refs:
+      - master
+  tags:
+    - kubernetes
+
+build-only/debian:
+  stage: build
+  script:
+    - >
+      /kaniko/executor \
+        --verbosity error \
+        --dockerfile Dockerfile.debian \
         --context ${CI_PROJECT_DIR} \
         --no-push
   except:
