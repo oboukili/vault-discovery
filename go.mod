@@ -1,4 +1,4 @@
-module gitlab.com/maltcommunity/public/vault-discovery
+module github.com/oboukili/vault-discovery
 
 go 1.13
 

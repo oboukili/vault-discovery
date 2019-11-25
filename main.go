@@ -5,9 +5,9 @@ import (
 
 	"fmt"
 	"github.com/google/tcpproxy"
-	"gitlab.com/maltcommunity/public/vault-discovery/gce"
-	"gitlab.com/maltcommunity/public/vault-discovery/helpers"
-	"gitlab.com/maltcommunity/public/vault-discovery/types"
+	"github.com/oboukili/vault-discovery/gce"
+	"github.com/oboukili/vault-discovery/helpers"
+	"github.com/oboukili/vault-discovery/types"
 	"golang.org/x/net/context"
 	"os"
 	"os/signal"

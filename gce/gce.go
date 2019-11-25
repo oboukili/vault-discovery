@@ -6,8 +6,8 @@ import (
 	"strconv"
 
 	"github.com/pkg/errors"
-	"gitlab.com/maltcommunity/public/vault-discovery/helpers"
-	"gitlab.com/maltcommunity/public/vault-discovery/types"
+	"github.com/oboukili/vault-discovery/helpers"
+	"github.com/oboukili/vault-discovery/types"
 	"golang.org/x/net/context"
 	"google.golang.org/api/compute/v1"
 	"google.golang.org/api/option"
